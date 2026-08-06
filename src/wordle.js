@@ -104,12 +104,3 @@ export function parseBuffer(text) {
     cursorCol: text.length % WORD_LEN,
   };
 }
-
-/** Pick a random word plausible enough to be a real answer. */
-export function randomTarget(words, minZipf = 1.5) {
-  const pool = [];
-  for (let i = 0; i < words.count; i++) {
-    if (words.zipf[i] >= minZipf) pool.push(words.list[i]);
-  }
-  return pool[Math.floor(Math.random() * pool.length)];
-}

@@ -221,4 +221,9 @@ __marimo__/
 node_modules/
 dist/
 public/words.json
-tests/board.png
+tests/*.png
+
+# Throwaway analysis spikes (tests/_*.mjs)
+tests/_*.mjs
+data/pairs/
+data/book/
