@@ -227,3 +227,4 @@ tests/*.png
 tests/_*.mjs
 data/pairs/
 data/book/
+data/openers.part*.csv

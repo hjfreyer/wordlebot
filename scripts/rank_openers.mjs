@@ -36,7 +36,9 @@ import {
 
 const N_CANDIDATES = Number(process.argv[2]) || 600;
 const KEEP = Number(process.argv[3]) || 150;
-const SCREEN_PROBES = Number(process.env.SCREEN_PROBES) || 1000;
+const SHARD = Number(process.env.SHARD) || 0;
+const SHARDS = Number(process.env.SHARDS) || 1;
+const SCREEN_PROBES = process.env.SCREEN_PROBES === undefined ? 0 : Number(process.env.SCREEN_PROBES);
 const MAX_GUESSES = 12;
 
 const words = decodeBundle(JSON.parse(readFileSync('data/words.json', 'utf8')));
@@ -58,7 +60,8 @@ const rank = (S, guesses) => {
 // One cold-start ranking supplies both the openers to test and the probe pool
 // every later decision draws on.
 const cold = rank(pool, all);
-const openers = cold.slice(0, N_CANDIDATES).map((r) => r.index);
+const openers = cold.slice(0, N_CANDIDATES).map((r) => r.index)
+  .filter((_, i) => i % SHARDS === SHARD);
 const coldBits = new Map(cold.map((r) => [r.index, r.bits]));
 
 /** Mean guesses this opener costs across every reachable historical answer. */
@@ -117,20 +120,29 @@ function evaluate(opener, probes) {
   return { mean: total / solved, solved, unreachable, worst, within6 };
 }
 
-const screenProbes = cold.slice(0, SCREEN_PROBES).map((r) => r.index);
 const t0 = Date.now();
 
-console.log(`stage 1: screening ${openers.length} openers against ${targets.length} answers`);
-const screened = [];
-for (const [n, opener] of openers.entries()) {
-  screened.push({ opener, ...evaluate(opener, screenProbes) });
-  if ((n + 1) % 100 === 0) console.error(`  ${n + 1}/${openers.length}  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+// SCREEN_PROBES=0 disables the cheap pre-pass and rescores every candidate at
+// full fidelity. That is the honest default now: the screen was measured
+// against WordleBot's published openers and wrongly discarded stare, snare,
+// taser and saner -- all inside the top 31 by opening entropy, all comfortably
+// inside the true top 120. Openers are separated by hundredths of a turn
+// (0.059 across the whole top 120), far below the screen's error, so it
+// reordered essentially at random.
+let shortlist;
+if (SCREEN_PROBES > 0) {
+  const screenProbes = cold.slice(0, SCREEN_PROBES).map((r) => r.index);
+  console.log(`stage 1: screening ${openers.length} openers against ${targets.length} answers`);
+  const screened = [];
+  for (const [n, opener] of openers.entries()) {
+    screened.push({ opener, ...evaluate(opener, screenProbes) });
+    if ((n + 1) % 100 === 0) console.error(`  ${n + 1}/${openers.length}  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  }
+  screened.sort((a, b) => a.mean - b.mean);
+  shortlist = screened.slice(0, Math.min(screened.length, Math.round(KEEP * 1.4)));
+} else {
+  shortlist = openers.map((opener) => ({ opener, screened: false }));
 }
-screened.sort((a, b) => a.mean - b.mean);
-
-// Keep extra headroom: the screen reorders neighbours, so the shortlist is
-// wider than the output to avoid dropping a genuinely good opener.
-const shortlist = screened.slice(0, Math.min(screened.length, Math.round(KEEP * 1.4)));
 console.log(`stage 2: rescoring top ${shortlist.length} with every word available`);
 const rows = [];
 for (const [n, s1] of shortlist.entries()) {
@@ -141,8 +153,10 @@ for (const [n, s1] of shortlist.entries()) {
 rows.sort((a, b) => a.mean - b.mean || b.within6 - a.within6);
 console.log(`done in ${((Date.now() - t0) / 1000).toFixed(0)}s\n`);
 
-const moved = rows.filter((r, i) => Math.abs(r.screenRank - (i + 1)) > 20).length;
-console.log(`${moved}/${rows.length} openers moved more than 20 places between stages\n`);
+if (SCREEN_PROBES > 0) {
+  const moved = rows.filter((r, i) => Math.abs(r.screenRank - (i + 1)) > 20).length;
+  console.log(`${moved}/${rows.length} openers moved more than 20 places between stages\n`);
+}
 
 console.log('rank  word    mean   within6   worst   bits');
 for (const [n, r] of rows.slice(0, 25).entries()) {
@@ -151,9 +165,12 @@ for (const [n, r] of rows.slice(0, 25).entries()) {
   );
 }
 
+// Shards write partial files; every row is kept so the merge can rank globally.
+const keep = SHARDS > 1 ? rows : rows.slice(0, KEEP);
 const out = ['word,mean_guesses,solved,within6,worst,opening_bits'];
-for (const r of rows.slice(0, KEEP)) {
+for (const r of keep) {
   out.push(`${r.word},${r.mean.toFixed(4)},${r.solved},${r.within6},${r.worst},${r.bits.toFixed(2)}`);
 }
-writeFileSync('data/openers.csv', out.join('\n') + '\n');
-console.log(`\ndata/openers.csv: top ${Math.min(KEEP, rows.length)} of ${rows.length} evaluated`);
+const path = SHARDS > 1 ? `data/openers.part${SHARD}.csv` : 'data/openers.csv';
+writeFileSync(path, out.join('\n') + '\n');
+console.log(`\n${path}: ${keep.length} openers`);
