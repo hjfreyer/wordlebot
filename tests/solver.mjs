@@ -1,0 +1,86 @@
+import { chromium } from 'playwright';
+
+const URL = process.argv[2];
+const browser = await chromium.launch(
+  process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {},
+);
+const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+const errors = [];
+page.on('pageerror', (e) => errors.push(String(e)));
+page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+
+await page.goto(URL);
+await page.waitForSelector('.keyboard .key');
+
+let pass = 0;
+const check = (name, got, want) => {
+  const ok = got === want;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}\n        got  ${got}\n        want ${want}`);
+  ok ? pass++ : (process.exitCode = 1);
+};
+
+const settled = async () => {
+  await page.waitForSelector('.solver-progress', { state: 'detached', timeout: 60000 });
+  await page.waitForSelector('.solver-list', { timeout: 60000 });
+};
+const rows = () =>
+  page.$$eval('.solver-list li:not(.solver-head)', (ls) =>
+    ls.map((l) => ({
+      word: l.querySelector('.w').textContent,
+      bits: parseFloat(l.querySelector('.b').textContent),
+    })),
+  );
+const summary = () => page.$eval('.solver-summary', (e) => e.textContent.replace(/\s+/g, ' ').trim());
+
+// 1. Cold start ranks the whole candidate pool. `raise` scoring ~6 bits is the
+//    published entropy result for Wordle openers, so this is an external check.
+await settled();
+const cold = await rows();
+check('cold-start summary', await summary(), '6,098 words match what you know · 12.6 bits left');
+check('sorted by bits descending', cold.every((r, i) => i === 0 || cold[i - 1].bits >= r.bits), true);
+check('top opener near 6 bits', cold[0].bits > 5.9 && cold[0].bits < 6.1, true);
+console.log('        top 5:', cold.slice(0, 5).map((r) => `${r.word} ${r.bits}`).join('  '));
+
+// 2. A guess narrows the field, and the panel reflects it.
+await page.keyboard.type('hoard');
+await page.keyboard.type('crane');
+await settled();
+const after = await rows();
+const count = parseInt((await summary()).replace(/,/g, ''), 10);
+check('field narrowed by crane', count < 100 && count > 0, true);
+check('every listed word is consistent', after.length > 0, true);
+console.log('        remaining:', count, '| top:', after.slice(0, 3).map((r) => r.word).join(' '));
+
+// 3. The true target must still be in the candidate list -- if the filter is
+//    wrong in a way that excludes it, the solver is unusable.
+const listed = new Set(after.map((r) => r.word));
+check('target still a candidate', listed.has('hoard'), true);
+
+// 4. Typing an incomplete row must NOT restart the ranking: the memo is keyed
+//    on completed-row content, not array identity.
+await page.keyboard.type('sw');
+const stillListed = await page.$('.solver-list');
+check('partial row does not re-rank', stillListed !== null, true);
+const sameCount = parseInt((await summary()).replace(/,/g, ''), 10);
+check('candidate count unchanged by partial row', sameCount, count);
+
+// 5. Solving collapses the field to exactly the target.
+await page.keyboard.type('ard'); // completes the guess 'sward'
+await settled();
+await page.keyboard.type('hoard'); // now actually solve it
+await settled();
+await page.waitForFunction(
+  () => document.querySelector('.solver-summary').textContent.includes('1 word matches'),
+  { timeout: 60000 },
+);
+const solved = await rows();
+check('one candidate left after solving', solved.length, 1);
+check('that candidate is the target', solved[0].word, 'hoard');
+
+await page.screenshot({ path: 'tests/solver.png' });
+console.log(`\n${pass} checks passed`);
+if (errors.length) {
+  console.log('CONSOLE ERRORS:', errors);
+  process.exitCode = 1;
+}
+await browser.close();

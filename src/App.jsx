@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import SolverPanel from './SolverPanel.jsx';
 import {
   WORD_LEN,
   keyboardStates,
@@ -9,6 +10,9 @@ import {
 } from './wordle.js';
 
 const KEY_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
+const ENCODE = { absent: 0, present: 1, correct: 2 };
+// Matches the README's "could plausibly be the answer" cutoff.
+const MIN_ZIPF = 1.5;
 
 export default function App() {
   const [words, setWords] = useState(null);
@@ -51,12 +55,21 @@ export default function App() {
     }));
 
     const scored = rows.filter((r) => r.score);
+
+    // What a solver would know: each completed guess and the feedback it drew.
+    const observations = scored.map((r) => ({
+      word: r.word,
+      pattern: r.score.reduce((acc, s, i) => acc + ENCODE[s] * 3 ** i, 0),
+    }));
+
     return {
       target,
       targetReady,
       rows,
       cursorRow,
       cursorCol,
+      observations,
+      skippedObservations: scored.filter((r) => !r.known).length,
       keys: keyboardStates(scored),
       solvedAt: scored.findIndex((r) => r.word === target) + 1 || null,
       targetKnown: words && targetReady ? words.index.has(target) : true,
@@ -67,12 +80,14 @@ export default function App() {
     };
   }, [text, words]);
 
-  if (error) return <main className="app"><p className="error">{error}</p></main>;
-  if (!words) return <main className="app"><p className="muted">Loading words…</p></main>;
+  if (error) return <div className="layout"><main className="app"><p className="error">{error}</p></main></div>;
+  if (!words)
+    return <div className="layout"><main className="app"><p className="muted">Loading words…</p></main></div>;
 
   return (
-    <main className="app">
-      <header>
+    <div className="layout">
+      <main className="app">
+        <header>
         <h1>wordlebot</h1>
         <p className="muted">
           Type five letters to set the target, then keep typing to guess.
@@ -136,6 +151,14 @@ export default function App() {
       </p>
 
       <Keyboard states={game.keys} onKey={type} onBackspace={backspace} />
+      </main>
+
+      <SolverPanel
+        words={words}
+        minZipf={MIN_ZIPF}
+        observations={game.observations}
+        skipped={game.skippedObservations}
+      />
 
       <footer className="muted">
         Word list from{' '}
@@ -144,7 +167,7 @@ export default function App() {
         <a href="https://books.google.com/ngrams">Google Books Ngram Viewer</a>, used under{' '}
         <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>.
       </footer>
-    </main>
+    </div>
   );
 }
 
