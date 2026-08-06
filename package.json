@@ -1,0 +1,23 @@
+{
+  "name": "wordlebot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/copy_data.mjs",
+    "dev": "vite",
+    "prebuild": "node scripts/copy_data.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "build:single": "npm run build && node scripts/build_single.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.5",
+    "playwright": "^1.62.1",
+    "vite": "^8.2.0"
+  }
+}

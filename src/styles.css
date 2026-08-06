@@ -1,0 +1,145 @@
+/* Tile colours are Wordle's own -- they're the vernacular of this game and
+   carry meaning players already know, so they stay fixed across themes. Only
+   the surrounding neutrals shift. Those neutrals carry a slight green bias to
+   sit with the correct-tile accent rather than reading as generic grey. */
+:root {
+  --correct: #6aaa64;
+  --present: #c9b458;
+  --absent: #787c7e;
+
+  --bg: #fbfcfa;
+  --fg: #1a1c19;
+  --muted: #6e7370;
+  --border: #d5d9d3;
+  --border-filled: #868b84;
+  --key: #d5d9d3;
+  --unknown: #c04a3d;
+}
+
+/* Dark tokens live in one place and are applied by three selectors: the OS
+   preference, and both explicit overrides a host toggle might stamp on <html>.
+   The light override has to exist too, so the toggle can force light back on a
+   dark-preference OS. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #111312;
+    --fg: #f6f8f5;
+    --muted: #8e948f;
+    --border: #383b37;
+    --border-filled: #565a54;
+    --key: #7d827c;
+    --unknown: #e06c5e;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #111312;
+  --fg: #f6f8f5;
+  --muted: #8e948f;
+  --border: #383b37;
+  --border-filled: #565a54;
+  --key: #7d827c;
+  --unknown: #e06c5e;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+}
+
+.app {
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+}
+
+header { text-align: center; }
+h1 { margin: 0; font-size: 1.5rem; letter-spacing: 0.02em; }
+.muted { color: var(--muted); font-size: 0.85rem; margin: 0.4rem 0 0; }
+.error { color: var(--unknown); }
+footer { text-align: center; line-height: 1.5; }
+footer a { color: inherit; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+
+.controls button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 0.25rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+.controls button:hover:not(:disabled) { border-color: var(--border-filled); }
+.controls button:disabled { opacity: 0.4; cursor: default; }
+
+.board { display: flex; flex-direction: column; gap: 0.3rem; width: 100%; align-items: center; }
+.board hr { width: 100%; max-width: 20rem; border: 0; border-top: 1px solid var(--border); margin: 0.4rem 0; }
+
+.row { display: grid; grid-template-columns: repeat(5, 3.5rem); gap: 0.3rem; }
+
+.cell {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  font-size: 1.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  border: 2px solid var(--border);
+  color: var(--fg);
+}
+.cell.filled { border-color: var(--border-filled); }
+.cell.active { border-color: var(--fg); }
+
+.cell.correct { background: var(--correct); border-color: var(--correct); color: #fff; }
+.cell.present { background: var(--present); border-color: var(--present); color: #fff; }
+.cell.absent  { background: var(--absent);  border-color: var(--absent);  color: #fff; }
+
+/* The target row is reference, not a guess -- keep it visually quieter. */
+.row.target .cell { border-style: dashed; font-size: 1.5rem; }
+.row.unknown .cell.filled { border-color: var(--unknown); }
+
+.status { font-size: 0.85rem; margin: 0; text-align: center; min-height: 1.2em; }
+
+.keyboard { display: flex; flex-direction: column; gap: 0.35rem; width: 100%; }
+.krow { display: flex; gap: 0.35rem; justify-content: center; }
+
+.key {
+  font: inherit;
+  font-weight: 600;
+  text-transform: uppercase;
+  min-width: 1.9rem;
+  height: 3rem;
+  padding: 0 0.3rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: var(--key);
+  color: var(--fg);
+  cursor: pointer;
+}
+.key.wide { min-width: 3rem; }
+.key.correct { background: var(--correct); color: #fff; }
+.key.present { background: var(--present); color: #fff; }
+.key.absent  { background: var(--absent);  color: #fff; }
+
+/* Every control is reachable by keyboard, and the game itself is keyboard-first,
+   so focus must stay visible rather than being suppressed for looks. */
+:is(.key, .controls button):focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+}
+
+@media (max-width: 24rem) {
+  .row { grid-template-columns: repeat(5, 2.9rem); }
+  .cell { font-size: 1.4rem; }
+}
