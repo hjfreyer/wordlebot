@@ -12,6 +12,7 @@ Everything here is permissively licensed — attribution only, no copyleft.
 | `data/words.json` | 14,855 | **The browser bundle.** Words and frequencies packed into one file, 88 KB raw / 44 KB gzipped. |
 | `data/allowed_guesses.txt` | 14,855 | Upstream snapshot: every five-letter word Wordle accepts, lowercase, alphabetical, one per line. |
 | `data/frequencies.csv` | 14,855 | `word,zipf`. Human-readable intermediate — a packed blob is unreadable in a diff, so this is what you look at when the upstream list changes. |
+| `data/answers.txt` | 2,309 | **Evaluation set, not shipped.** Words NYT has actually used, in puzzle order. Deliberately absent from `words.json` — see below. |
 
 ### Using the bundle
 
@@ -69,9 +70,26 @@ Checked against the 2,309 words NYT has actually used as answers:
 guess list by 59% while losing 15 real answers, and the cliff at 2.5 is where
 you start doing real damage.
 
-That answer list is not vendored here — it's only used as a yardstick for
-choosing the threshold. Solving against it directly would be an easier game than
-a real player faces, and NYT keeps curating it.
+### The answer list, and why it's quarantined
+
+`data/answers.txt` is vendored so that thresholds and models can be measured
+rather than guessed at, but it is kept out of `data/words.json` on purpose. A
+solver that can read the answer key isn't solving — it's looking up. Nothing in
+the build pipeline copies it into the bundle, and `scripts/build_bundle.py`
+reads only `frequencies.csv`.
+
+It is stored in **puzzle order**, not alphabetically. That's what makes an
+honest evaluation possible: split on time, fit on the earlier puzzles, and
+measure against the later ones. Anything fitted against the whole list and then
+scored on the whole list is reporting its own training accuracy.
+
+Two properties of this list are worth knowing before you lean on it:
+
+- **It's historical, not exhaustive.** These are answers NYT has used *so far*.
+  A perfectly ordinary word that simply hasn't come up yet is labelled a
+  non-answer, which puts a ceiling on how well any model can appear to score.
+- **NYT keeps curating it.** Six words were dropped after the acquisition, and
+  the list grows by one a day.
 
 ### Known weakness
 
@@ -91,7 +109,7 @@ edges.
 ## Regenerating
 
 ```sh
-python3 scripts/fetch_lists.py        # refresh data/allowed_guesses.txt
+python3 scripts/fetch_lists.py        # refresh allowed_guesses.txt and answers.txt
 python3 scripts/build_frequencies.py  # rebuild data/frequencies.csv
 python3 scripts/build_bundle.py       # rebuild data/words.json
 ```
@@ -99,6 +117,26 @@ python3 scripts/build_bundle.py       # rebuild data/words.json
 Run in that order — each step feeds the next. Stdlib only, no third-party
 dependencies. All outputs are committed, so nothing at runtime needs network
 access.
+
+## Evaluating the solver
+
+```sh
+node scripts/eval.mjs [opener] [all|answers]
+```
+
+Plays the solver against every historical answer and reports guesses actually
+taken, split into the puzzles the prior was fitted on and the ones held out.
+
+Prefer this to the search's own expected-cost numbers. Those are depth-limited
+and use an optimistic leaf bound (`2 - 1/n`), so they rank moves correctly but
+systematically understate cost — a deeper search can report a *higher* estimate
+for the same position, because it has stopped guessing about the tail.
+
+The eval also surfaces a hard failure the estimates cannot: **15 of the 2,309
+answers fall below the prior's pool threshold and are unreachable at any depth**
+(`cyber`, `geeky`, `nerdy`, `bicep`, `voila` and friends — the Google Books
+blind spot described above). Pool coverage is 99.35%, and that ceiling applies
+to every strategy equally.
 
 ## Credits
 
