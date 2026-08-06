@@ -168,6 +168,26 @@ footer a { color: inherit; }
   color: var(--muted);
 }
 .solver-summary { margin: 0; font-size: 0.85rem; }
+
+.solver-modes { display: flex; gap: 0.25rem; }
+.solver-modes button {
+  font: inherit;
+  font-size: 0.72rem;
+  flex: 1;
+  padding: 0.3rem 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.solver-modes button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: var(--border-filled);
+  color: var(--fg);
+  font-weight: 600;
+}
+.solver-modes button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .solver-summary strong { font-variant-numeric: tabular-nums; }
 .solver-note { margin: 0; font-size: 0.75rem; color: var(--muted); }
 

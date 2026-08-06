@@ -8,12 +8,12 @@ import {
   remainingBits,
 } from './solver.js';
 
-// Rows rendered at once. The candidate list opens at ~6,000 words and nobody
+// Rows rendered at once. The ranking covers all 14,855 guesses and nobody
 // scrolls that far, so the tail is summarised rather than mounted.
 const SHOWN = 200;
 // Guesses ranked per animation frame. Each costs |S| pattern computations, so
 // this is a tradeoff between total time and frame budget.
-const CHUNK = 48;
+const CHUNK = 120;
 
 export default function SolverPanel({ words, observations, skipped }) {
   const packed = useMemo(() => packWords(words.list), [words]);
@@ -26,6 +26,10 @@ export default function SolverPanel({ words, observations, skipped }) {
     for (let i = 0; i < words.count; i++) p[i] = answerPrior(words.zipf[i], words.list[i]);
     return p;
   }, [words]);
+
+  // Every legal guess is ranked, including words that can never be the answer:
+  // a pure probe often splits the field better than any candidate can.
+  const allGuesses = useMemo(() => [...Array(words.count).keys()], [words]);
 
   const pool = useMemo(() => {
     const out = [];
@@ -67,6 +71,7 @@ export default function SolverPanel({ words, observations, skipped }) {
     return (index) => (totalWeight > 0 ? (byIndex.get(index) ?? 0) / totalWeight : 0);
   }, [candidates, weights, totalWeight]);
 
+  const [mode, setMode] = useState('all');
   const [ranked, setRanked] = useState(null);
   const [progress, setProgress] = useState(0);
   const frame = useRef(0);
@@ -77,7 +82,7 @@ export default function SolverPanel({ words, observations, skipped }) {
   useLayoutEffect(() => {
     setRanked(null);
     setProgress(0);
-    const ranker = createRanker(packed, candidates, candidates, weights);
+    const ranker = createRanker(packed, allGuesses, candidates, weights);
 
     const pump = () => {
       if (ranker.step(CHUNK)) {
@@ -90,15 +95,20 @@ export default function SolverPanel({ words, observations, skipped }) {
     pump();
 
     return () => cancelAnimationFrame(frame.current);
-  }, [packed, candidates, weights]);
+  }, [packed, allGuesses, candidates, weights]);
 
   // Bits still unknown. Weighted, so a field padded with implausible words
   // reads as less uncertain than log2(count) would suggest.
   const remaining = useMemo(() => remainingBits(weights), [weights]);
 
+  const shown = useMemo(
+    () => (mode === 'answers' && ranked ? ranked.filter((r) => chanceOf(r.index) > 0) : ranked),
+    [ranked, mode, chanceOf],
+  );
+
   return (
     <aside className="solver" aria-label="Solver">
-      <h2>Possible words</h2>
+      <h2>Best guesses</h2>
 
       <p className="solver-summary">
         <strong>{candidates.length.toLocaleString()}</strong>{' '}
@@ -113,6 +123,15 @@ export default function SolverPanel({ words, observations, skipped }) {
         </p>
       )}
 
+      <div className="solver-modes" role="group" aria-label="Which guesses to show">
+        <button aria-pressed={mode === 'all'} onClick={() => setMode('all')}>
+          All guesses
+        </button>
+        <button aria-pressed={mode === 'answers'} onClick={() => setMode('answers')}>
+          Possible answers
+        </button>
+      </div>
+
       {candidates.length === 0 ? (
         <p className="solver-note">
           Nothing matches. The target may be too obscure to be in the answer pool.
@@ -120,7 +139,7 @@ export default function SolverPanel({ words, observations, skipped }) {
       ) : ranked === null ? (
         <div className="solver-progress" role="status">
           <div className="bar" style={{ width: `${Math.round(progress * 100)}%` }} />
-          <span>Ranking {candidates.length.toLocaleString()} words…</span>
+          <span>Ranking {allGuesses.length.toLocaleString()} guesses…</span>
         </div>
       ) : (
         <>
@@ -132,7 +151,7 @@ export default function SolverPanel({ words, observations, skipped }) {
               </span>
               <span title="Expected information gained by guessing this word">bits</span>
             </li>
-            {ranked.slice(0, SHOWN).map((r) => (
+            {shown.slice(0, SHOWN).map((r) => (
               <li key={r.index}>
                 <span className="w">{words.list[r.index]}</span>
                 <span className={`p ${chanceOf(r.index) === 0 ? 'probe' : ''}`}>
@@ -142,9 +161,10 @@ export default function SolverPanel({ words, observations, skipped }) {
               </li>
             ))}
           </ol>
-          {ranked.length > SHOWN && (
+          {shown.length > SHOWN && (
             <p className="solver-note">
-              Showing the top {SHOWN} of {ranked.length.toLocaleString()}.
+              Showing the top {SHOWN} of {shown.length.toLocaleString()}
+              {mode === 'all' ? ' ranked guesses' : ' possible answers'}.
             </p>
           )}
         </>

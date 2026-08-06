@@ -26,43 +26,48 @@ export function packWords(list) {
  * in a 5-bit mask instead of a letter-count map. A map would mean allocating or
  * clearing per call, and this is called ~37M times for a full ranking.
  */
-const digits = new Uint8Array(WORD_LEN); // scratch, reused across calls
+// Letter tallies for the target being scored. Module-level and always left
+// zeroed, so the hot loop never allocates or clears 26 slots per call -- only
+// the five letters it actually touched get reset.
+const tally = new Int8Array(26);
 
+/**
+ * Unrolled for WORD_LEN 5. This runs ~100M times for a full ranking, and the
+ * loop version -- which rescanned the target for every yellow -- was about
+ * twice as slow.
+ */
 export function patternOf(packed, guess, target) {
   const g = guess * WORD_LEN;
   const t = target * WORD_LEN;
-  let used = 0;
+  const g0 = packed[g], g1 = packed[g + 1], g2 = packed[g + 2],
+        g3 = packed[g + 3], g4 = packed[g + 4];
+  const t0 = packed[t], t1 = packed[t + 1], t2 = packed[t + 2],
+        t3 = packed[t + 3], t4 = packed[t + 4];
 
-  // Greens claim their target position first.
-  for (let i = 0; i < WORD_LEN; i++) {
-    if (packed[g + i] === packed[t + i]) {
-      digits[i] = 2;
-      used |= 1 << i;
-    } else {
-      digits[i] = 0;
-    }
-  }
+  tally[t0]++; tally[t1]++; tally[t2]++; tally[t3]++; tally[t4]++;
 
-  // Yellows must be assigned LEFT TO RIGHT: with two of a letter in the guess
-  // and one in the target, the leftmost unmatched position gets it. Packing the
-  // base-3 number in the same loop would force right-to-left and silently mark
-  // the wrong copy -- 'queen' against 'virge' puts the yellow on the second e.
-  for (let i = 0; i < WORD_LEN; i++) {
-    if (digits[i] === 2) continue;
-    const c = packed[g + i];
-    for (let j = 0; j < WORD_LEN; j++) {
-      if ((used >> j) & 1) continue;
-      if (packed[t + j] === c) {
-        used |= 1 << j;
-        digits[i] = 1;
-        break;
-      }
-    }
-  }
+  // Greens first, each consuming one of its letter from the tally.
+  let d0 = 0, d1 = 0, d2 = 0, d3 = 0, d4 = 0;
+  if (g0 === t0) { d0 = 2; tally[g0]--; }
+  if (g1 === t1) { d1 = 2; tally[g1]--; }
+  if (g2 === t2) { d2 = 2; tally[g2]--; }
+  if (g3 === t3) { d3 = 2; tally[g3]--; }
+  if (g4 === t4) { d4 = 2; tally[g4]--; }
 
-  let p = 0;
-  for (let i = WORD_LEN - 1; i >= 0; i--) p = p * 3 + digits[i];
-  return p;
+  // Then yellows, strictly left to right: with two of a letter in the guess and
+  // one in the target, the leftmost unmatched position claims it. Evaluating
+  // these right-to-left marks the wrong copy -- 'queen' against 'virge' puts
+  // the yellow on the second e.
+  if (d0 === 0 && tally[g0] > 0) { d0 = 1; tally[g0]--; }
+  if (d1 === 0 && tally[g1] > 0) { d1 = 1; tally[g1]--; }
+  if (d2 === 0 && tally[g2] > 0) { d2 = 1; tally[g2]--; }
+  if (d3 === 0 && tally[g3] > 0) { d3 = 1; tally[g3]--; }
+  if (d4 === 0 && tally[g4] > 0) { d4 = 1; tally[g4]--; }
+
+  // Reset only what was touched. Every increment above was to one of these.
+  tally[t0] = 0; tally[t1] = 0; tally[t2] = 0; tally[t3] = 0; tally[t4] = 0;
+
+  return d0 + d1 * 3 + d2 * 9 + d3 * 27 + d4 * 81;
 }
 
 /** Indices of pool words consistent with every observed guess/pattern pair. */
@@ -129,7 +134,11 @@ export function createRanker(packed, guesses, candidates, weights) {
   const ranked = new Array(guesses.length);
 
   let totalWeight = 0;
-  for (let i = 0; i < total; i++) totalWeight += weights[i];
+  const weightOf = new Map();
+  for (let i = 0; i < total; i++) {
+    totalWeight += weights[i];
+    weightOf.set(candidates[i], weights[i]);
+  }
 
   let next = 0;
 
@@ -170,7 +179,19 @@ export function createRanker(packed, guesses, candidates, weights) {
     },
 
     result() {
-      return ranked.slice(0, next).sort((a, b) => b.bits - a.bits);
+      // Ties break toward the word that could actually win. Pure entropy is
+      // indifferent between a candidate and a probe that split identically,
+      // but the candidate also has a chance of ending the game outright -- and
+      // once one candidate remains, every guess scores 0 bits and only this
+      // tiebreak keeps the answer from being buried under 14,854 equal probes.
+      // It's a one-ply stand-in for optimising expected moves.
+      return ranked
+        .slice(0, next)
+        .sort(
+          (a, b) =>
+            b.bits - a.bits ||
+            (weightOf.get(b.index) ?? 0) - (weightOf.get(a.index) ?? 0),
+        );
     },
   };
 }
