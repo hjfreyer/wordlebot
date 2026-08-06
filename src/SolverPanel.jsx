@@ -1,5 +1,12 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createRanker, filterCandidates, packWords } from './solver.js';
+import {
+  POOL_MIN_PRIOR,
+  answerPrior,
+  createRanker,
+  filterCandidates,
+  packWords,
+  remainingBits,
+} from './solver.js';
 
 // Rows rendered at once. The candidate list opens at ~6,000 words and nobody
 // scrolls that far, so the tail is summarised rather than mounted.
@@ -8,14 +15,23 @@ const SHOWN = 200;
 // this is a tradeoff between total time and frame budget.
 const CHUNK = 48;
 
-export default function SolverPanel({ words, minZipf, observations, skipped }) {
+export default function SolverPanel({ words, observations, skipped }) {
   const packed = useMemo(() => packWords(words.list), [words]);
+
+  // Prior probability each word is the answer. Replaces the old hard Zipf
+  // cutoff: the pool is now "words with a non-negligible prior", and within it
+  // words are weighted rather than treated as equally likely.
+  const prior = useMemo(() => {
+    const p = new Float64Array(words.count);
+    for (let i = 0; i < words.count; i++) p[i] = answerPrior(words.zipf[i], words.list[i]);
+    return p;
+  }, [words]);
 
   const pool = useMemo(() => {
     const out = [];
-    for (let i = 0; i < words.count; i++) if (words.zipf[i] >= minZipf) out.push(i);
+    for (let i = 0; i < words.count; i++) if (prior[i] >= POOL_MIN_PRIOR) out.push(i);
     return out;
-  }, [words, minZipf]);
+  }, [words, prior]);
 
   // Keyed on content, not array identity: `observations` is rebuilt on every
   // keystroke, but typing into an unfinished row doesn't change what's known.
@@ -35,6 +51,22 @@ export default function SolverPanel({ words, minZipf, observations, skipped }) {
     [packed, pool, obs],
   );
 
+  // Renormalised over the surviving candidates: P(this word is the answer,
+  // given everything known so far).
+  const weights = useMemo(
+    () => Float64Array.from(candidates, (i) => prior[i]),
+    [candidates, prior],
+  );
+  const totalWeight = useMemo(() => weights.reduce((a, b) => a + b, 0), [weights]);
+
+  // Keyed by word index, so a guess that isn't a candidate resolves to 0 --
+  // that's what marks a pure probe once non-answers are ranked too.
+  const chanceOf = useMemo(() => {
+    const byIndex = new Map();
+    for (let i = 0; i < candidates.length; i++) byIndex.set(candidates[i], weights[i]);
+    return (index) => (totalWeight > 0 ? (byIndex.get(index) ?? 0) / totalWeight : 0);
+  }, [candidates, weights, totalWeight]);
+
   const [ranked, setRanked] = useState(null);
   const [progress, setProgress] = useState(0);
   const frame = useRef(0);
@@ -45,7 +77,7 @@ export default function SolverPanel({ words, minZipf, observations, skipped }) {
   useLayoutEffect(() => {
     setRanked(null);
     setProgress(0);
-    const ranker = createRanker(packed, candidates, candidates);
+    const ranker = createRanker(packed, candidates, candidates, weights);
 
     const pump = () => {
       if (ranker.step(CHUNK)) {
@@ -58,10 +90,11 @@ export default function SolverPanel({ words, minZipf, observations, skipped }) {
     pump();
 
     return () => cancelAnimationFrame(frame.current);
-  }, [packed, candidates]);
+  }, [packed, candidates, weights]);
 
-  // Entropy of the remaining set: how many bits are still unknown.
-  const remaining = candidates.length > 0 ? Math.log2(candidates.length) : 0;
+  // Bits still unknown. Weighted, so a field padded with implausible words
+  // reads as less uncertain than log2(count) would suggest.
+  const remaining = useMemo(() => remainingBits(weights), [weights]);
 
   return (
     <aside className="solver" aria-label="Solver">
@@ -82,7 +115,7 @@ export default function SolverPanel({ words, minZipf, observations, skipped }) {
 
       {candidates.length === 0 ? (
         <p className="solver-note">
-          Nothing matches. The target may be outside the Zipf {minZipf} pool.
+          Nothing matches. The target may be too obscure to be in the answer pool.
         </p>
       ) : ranked === null ? (
         <div className="solver-progress" role="status">
@@ -94,11 +127,17 @@ export default function SolverPanel({ words, minZipf, observations, skipped }) {
           <ol className="solver-list">
             <li className="solver-head">
               <span>word</span>
+              <span title="Probability this word is the answer. 0% means it can only ever be a probe.">
+                p(answer)
+              </span>
               <span title="Expected information gained by guessing this word">bits</span>
             </li>
             {ranked.slice(0, SHOWN).map((r) => (
               <li key={r.index}>
                 <span className="w">{words.list[r.index]}</span>
+                <span className={`p ${chanceOf(r.index) === 0 ? 'probe' : ''}`}>
+                  {formatChance(chanceOf(r.index))}
+                </span>
                 <span className="b">{r.bits.toFixed(2)}</span>
               </li>
             ))}
@@ -112,4 +151,11 @@ export default function SolverPanel({ words, minZipf, observations, skipped }) {
       )}
     </aside>
   );
+}
+
+/** A dash, not 0%, for words that can never be the answer -- pure probes. */
+function formatChance(p) {
+  if (p === 0) return '—';
+  if (p < 0.001) return '<0.1%';
+  return `${(p * 100).toFixed(1)}%`;
 }

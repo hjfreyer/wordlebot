@@ -74,18 +74,63 @@ export function filterCandidates(packed, pool, observations) {
 }
 
 /**
- * Expected information, in bits, for each candidate played as the next guess.
+ * Prior probability that a word is the answer.
  *
- * A guess partitions the remaining candidates by the feedback it would produce.
- * The bits it yields is the entropy of that partition: -sum p*log2(p). A guess
- * that splits the field evenly scores high; one that usually returns the same
- * pattern scores low.
+ * Logistic regression on two features, fitted against the words NYT has
+ * actually used as answers:
+ *
+ *   P = sigmoid(2.192*zipf - 8.715*pluralish - 6.665)
+ *
+ * Frequency alone is not enough. It scores log-loss 0.201 and reproduces only
+ * 7 of the true top 20 openers, because the guess list is 29% -s words while
+ * real answers are 1.6% -s. Among common words, 10.7% of -s endings are
+ * answers versus 77.4% of everything else. Adding that feature takes log-loss
+ * to 0.171 and the overlap to 16/20.
+ *
+ * Only these three coefficients came from the answer list. The list itself is
+ * not shipped and the solver never consults it.
+ *
+ * The fit overshoots above Zipf 5, where the empirical rate plateaus near 0.8
+ * rather than approaching 1: the answer list is finite and historical, so a
+ * common word NYT simply hasn't used yet is labelled a non-answer.
  */
-export function createRanker(packed, guesses, candidates) {
-  const counts = new Int32Array(PATTERN_COUNT);
+export const PRIOR_ZIPF = 2.192;
+export const PRIOR_PLURAL = -8.715;
+export const PRIOR_INTERCEPT = -6.665;
+
+/** Words below this prior hold 1.4% of the total mass between them. */
+export const POOL_MIN_PRIOR = 0.01;
+
+/**
+ * Does the trailing -s look like an inflection rather than part of the stem?
+ * `floss`, `focus`, `chaos`, `oasis` keep their s; `tares` and `rates` don't.
+ */
+export function pluralish(word) {
+  return word.endsWith('s') && !'suio'.includes(word[WORD_LEN - 2]);
+}
+
+export function answerPrior(zipf, word) {
+  const z = PRIOR_ZIPF * zipf + PRIOR_PLURAL * (pluralish(word) ? 1 : 0) + PRIOR_INTERCEPT;
+  return 1 / (1 + Math.exp(-z));
+}
+
+/**
+ * Expected information for each guess, over a weighted answer distribution.
+ *
+ * `weights[i]` is the prior for `candidates[i]`. Instead of every remaining
+ * word being equally likely, each pattern's probability is the share of prior
+ * mass that lands in it -- so splitting off a bucket of implausible words
+ * counts for much less than splitting off a bucket of likely ones.
+ */
+export function createRanker(packed, guesses, candidates, weights) {
+  const buckets = new Float64Array(PATTERN_COUNT);
   const touched = new Int32Array(PATTERN_COUNT);
   const total = candidates.length;
   const ranked = new Array(guesses.length);
+
+  let totalWeight = 0;
+  for (let i = 0; i < total; i++) totalWeight += weights[i];
+
   let next = 0;
 
   return {
@@ -106,15 +151,17 @@ export function createRanker(packed, guesses, candidates) {
 
         for (let ci = 0; ci < total; ci++) {
           const p = patternOf(packed, guess, candidates[ci]);
-          if (counts[p] === 0) touched[seen++] = p;
-          counts[p]++;
+          if (buckets[p] === 0) touched[seen++] = p;
+          buckets[p] += weights[ci];
         }
 
         let bits = 0;
         for (let k = 0; k < seen; k++) {
-          const p = counts[touched[k]] / total;
-          bits -= p * Math.log2(p);
-          counts[touched[k]] = 0;
+          const p = buckets[touched[k]] / totalWeight;
+          // A bucket can hold only near-zero-prior words; skip rather than
+          // let log2 of a denormal poison the sum.
+          if (p > 0) bits -= p * Math.log2(p);
+          buckets[touched[k]] = 0;
         }
 
         ranked[next] = { index: guess, bits, buckets: seen };
@@ -128,6 +175,20 @@ export function createRanker(packed, guesses, candidates) {
   };
 }
 
+/** Shannon entropy of the answer distribution itself: the bits still unknown. */
+export function remainingBits(weights) {
+  let total = 0;
+  for (let i = 0; i < weights.length; i++) total += weights[i];
+  if (total === 0) return 0;
+
+  let bits = 0;
+  for (let i = 0; i < weights.length; i++) {
+    const p = weights[i] / total;
+    if (p > 0) bits -= p * Math.log2(p);
+  }
+  return bits;
+}
+
 /**
  * Rank every guess in one go.
  *
@@ -135,8 +196,37 @@ export function createRanker(packed, guesses, candidates) {
  * and takes seconds, so the UI drives createRanker() in slices instead. This
  * wrapper is for tests and offline analysis, where blocking is fine.
  */
-export function rankByInformation(packed, guesses, candidates) {
-  const ranker = createRanker(packed, guesses, candidates);
+export function rankByInformation(packed, guesses, candidates, weights) {
+  const ranker = createRanker(
+    packed,
+    guesses,
+    candidates,
+    weights ?? new Float64Array(candidates.length).fill(1),
+  );
   ranker.step(Infinity);
   return ranker.result();
+}
+
+/**
+ * Draw a target from the prior, sampling proportional to P(answer).
+ *
+ * Must use the same distribution the solver pools on: picking by raw frequency
+ * could land on a plural like "tares", whose prior is ~1e-5, leaving the solver
+ * with an empty candidate set and no way to reach the answer.
+ */
+export function randomTarget(words, rand = Math.random) {
+  let total = 0;
+  const weights = new Float64Array(words.count);
+  for (let i = 0; i < words.count; i++) {
+    const p = answerPrior(words.zipf[i], words.list[i]);
+    weights[i] = p >= POOL_MIN_PRIOR ? p : 0;
+    total += weights[i];
+  }
+
+  let r = rand() * total;
+  for (let i = 0; i < words.count; i++) {
+    r -= weights[i];
+    if (r <= 0) return words.list[i];
+  }
+  return words.list[words.count - 1]; // float drift on the last bucket
 }

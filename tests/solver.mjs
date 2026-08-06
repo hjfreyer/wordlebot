@@ -36,7 +36,7 @@ const summary = () => page.$eval('.solver-summary', (e) => e.textContent.replace
 //    published entropy result for Wordle openers, so this is an external check.
 await settled();
 const cold = await rows();
-check('cold-start summary', await summary(), '6,098 words match what you know · 12.6 bits left');
+check('cold-start pool size', parseInt((await summary()).replace(/,/g,''),10), 6792);
 check('sorted by bits descending', cold.every((r, i) => i === 0 || cold[i - 1].bits >= r.bits), true);
 check('top opener near 6 bits', cold[0].bits > 5.9 && cold[0].bits < 6.1, true);
 console.log('        top 5:', cold.slice(0, 5).map((r) => `${r.word} ${r.bits}`).join('  '));

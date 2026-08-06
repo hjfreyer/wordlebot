@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import SolverPanel from './SolverPanel.jsx';
+import { randomTarget } from './solver.js';
 import {
   WORD_LEN,
   keyboardStates,
   loadWords,
   parseBuffer,
-  randomTarget,
   scoreGuess,
 } from './wordle.js';
 
 const KEY_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
 const ENCODE = { absent: 0, present: 1, correct: 2 };
-// Matches the README's "could plausibly be the answer" cutoff.
-const MIN_ZIPF = 1.5;
 
 export default function App() {
   const [words, setWords] = useState(null);
@@ -155,7 +153,6 @@ export default function App() {
 
       <SolverPanel
         words={words}
-        minZipf={MIN_ZIPF}
         observations={game.observations}
         skipped={game.skippedObservations}
       />
