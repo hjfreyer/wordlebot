@@ -127,6 +127,28 @@ node scripts/eval.mjs [opener] [all|answers]
 Plays the solver against every historical answer and reports guesses actually
 taken, split into the puzzles the prior was fitted on and the ones held out.
 
+Opening `crane`, over all 2,309 answers:
+
+| strategy | mean guesses | solved within 6 | needed 7+ |
+| --- | --- | --- | --- |
+| all guesses (default) | **3.6643** | 99.35% | **0** |
+| possible answers only | 3.7254 | 98.44% | 21 |
+
+**Probes earn their place, but not by much on the mean.** Ranking every legal
+guess beats restricting to possible answers by 0.06 guesses — while removing the
+failure tail entirely. Candidates-only wins in 2 guesses three times as often
+(91 games vs 30), because it always plays something that could win outright; it
+pays by getting stranded among near-identical candidates and eliminating them
+one at a time. Probes trade lucky early wins for never losing. The mean alone
+hides this; the distribution is the point.
+
+Both strategies bottom out at the same floor: the 15 answers outside the pool.
+
+**On contamination.** The prior was fitted against these answers, so the split
+matters. Held-out puzzles cost `+0.060` guesses (candidates-only) and `-0.007`
+(all guesses) relative to those the fit saw — both negligible. Three
+coefficients cannot memorise 2,309 words, so the headline figures are honest.
+
 Prefer this to the search's own expected-cost numbers. Those are depth-limited
 and use an optimistic leaf bound (`2 - 1/n`), so they rank moves correctly but
 systematically understate cost — a deeper search can report a *higher* estimate
