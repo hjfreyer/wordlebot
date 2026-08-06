@@ -225,3 +225,4 @@ tests/*.png
 
 # Throwaway analysis spikes (tests/_*.mjs)
 tests/_*.mjs
+data/pairs/
