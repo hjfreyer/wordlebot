@@ -12,9 +12,10 @@
  * the earlier puzzles the fit saw, and the later ones held out -- and it is the
  * held-out figure that means anything.
  *
- *   node scripts/eval.mjs [opener] [strategy]
+ *   node scripts/eval.mjs [opener] [strategy] [limit]
  *     opener    first guess, default "crane"
  *     strategy  "all" (rank every legal guess) or "answers" (candidates only)
+ *     limit     play only the first N answers, for a quick check
  */
 
 import { readFileSync } from 'node:fs';
@@ -31,10 +32,14 @@ const OPENER = process.argv[2] ?? 'crane';
 const STRATEGY = process.argv[3] ?? 'all';
 const MAX_GUESSES = 12;
 const TRAIN_FRACTION = 0.7;
+const LIMIT = Number(process.argv[4]) || Infinity;
 
 const words = decodeBundle(JSON.parse(readFileSync('data/words.json', 'utf8')));
 const packed = packWords(words.list);
-const answers = readFileSync('data/answers.txt', 'utf8').split('\n').filter(Boolean);
+const answers = readFileSync('data/answers.txt', 'utf8')
+  .split('\n')
+  .filter(Boolean)
+  .slice(0, LIMIT);
 
 const prior = new Float64Array(words.count);
 for (let i = 0; i < words.count; i++) prior[i] = answerPrior(words.zipf[i], words.list[i]);
@@ -44,7 +49,15 @@ const pool = all.filter((i) => prior[i] >= POOL_MIN_PRIOR);
 const opener = words.index.get(OPENER);
 if (opener === undefined) throw new Error(`opener "${OPENER}" is not in the word list`);
 
-/** Guesses needed to reach `target`, or null if the solver cannot get there. */
+// Everything below works in word indices, never strings -- comparing the two
+// silently never matches, which reads as "unreachable" for every game.
+const targets = answers.map((w) => {
+  const i = words.index.get(w);
+  if (i === undefined) throw new Error(`answer "${w}" is missing from the word list`);
+  return i;
+});
+
+/** Guesses needed to reach `target` (a word index), or null if unreachable. */
 function play(target) {
   let candidates = pool;
   let guess = opener;
@@ -92,7 +105,7 @@ console.log(`opener "${OPENER}", strategy "${STRATEGY}", ${answers.length} histo
 console.log(`prior fitted on puzzles 1-${cut}; puzzles ${cut + 1}-${answers.length} are held out`);
 
 const t0 = Date.now();
-const results = answers.map(play);
+const results = targets.map(play);
 console.log(`\nplayed ${answers.length} games in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
 
 summarise('ALL answers (optimistic -- prior saw these)', results);
