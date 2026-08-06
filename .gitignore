@@ -222,3 +222,6 @@ node_modules/
 dist/
 public/words.json
 tests/*.png
+
+# Throwaway analysis spikes (tests/_*.mjs)
+tests/_*.mjs
