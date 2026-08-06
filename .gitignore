@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node / SPA build
+node_modules/
+dist/
+public/words.json
+tests/board.png
